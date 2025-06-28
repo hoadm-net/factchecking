@@ -266,7 +266,6 @@ vncorenlp/
 # Generated graph files
 *.gexf
 *.graphml
-text_graph.*
 
 # Model cache and embeddings
 .cache/
