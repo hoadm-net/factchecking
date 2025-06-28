@@ -292,8 +292,8 @@ temp/
 logs/
 
 # Data files (if any)
-data/
-datasets/
+# data/
+# datasets/
 
 # Output files
 output/

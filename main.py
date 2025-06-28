@@ -19,10 +19,12 @@ def show_help():
 Available Commands:
   mint-graph  - Main CLI command
   textgraph   - Alias for mint-graph
+  python main.py (no args) - Run demo with data/demo.json
 
 Quick Examples:
   
-1. Demo với dữ liệu mẫu:
+1. Demo với dữ liệu từ data/demo.json:
+   python main.py
    mint-graph --demo --verbose
 
 2. Phân tích text tùy chỉnh:
@@ -67,15 +69,25 @@ Note: Đảm bảo đã cài đặt dependencies và có file .env với OPENAI_
 
 def main():
     """Main entry point"""
-    # If no arguments, show help
+    # If no arguments, run demo with data from data/demo.json
     if len(sys.argv) == 1:
+        print("🚀 Running MINT TextGraph with demo data from data/demo.json...")
+        print("📝 Use --help to see all available options\n")
+        sys.argv.append('--demo')
+        sys.argv.append('--verbose')
+    
+    # If first argument is help or --help, show help
+    elif len(sys.argv) == 2 and sys.argv[1] in ['help', '--help', '-h']:
         show_help()
         return
     
-    # If first argument is help or --help, show help
-    if len(sys.argv) == 2 and sys.argv[1] in ['help', '--help', '-h']:
-        show_help()
-        return
+    # Auto-add demo if no input source is specified
+    else:
+        has_input_source = any(arg in sys.argv for arg in ['--demo', '-d', '--context', '-c', '--input-file', '-f'])
+        if not has_input_source:
+            print("🚀 No input source detected, using demo data from data/demo.json...")
+            print("📝 Use --help to see all available options\n")
+            sys.argv.append('--demo')
     
     # Otherwise, delegate to CLI
     try:

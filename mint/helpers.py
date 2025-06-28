@@ -68,9 +68,9 @@ def get_optimized_config_for_device(device_info, base_config):
     else:
         # CPU optimizations - reduce computational load
         return {
-            'similarity_threshold': base_config.get('cpu_similarity_threshold', 0.7),
-            'top_k': base_config.get('cpu_top_k', 3),
-            'pca_dimensions': base_config.get('cpu_pca_dimensions', 64),
+            'similarity_threshold': base_config.get('cpu_similarity_threshold', 0.9),
+            'top_k': base_config.get('cpu_top_k', 2),
+            'pca_dimensions': base_config.get('cpu_pca_dimensions', 32),
             'use_pca': True,  # PCA vẫn có thể giúp trên CPU
             'use_faiss': base_config.get('cpu_use_faiss', False)  # FAISS có thể problematic trên một số CPU
         }
@@ -144,11 +144,11 @@ def apply_device_optimizations(args, device_info, verbose=False):
     optimized_config = get_optimized_config_for_device(device_info, config)
     
     # Only override if user didn't specify custom values
-    if not hasattr(args, 'similarity_threshold_overridden'):
+    if not getattr(args, 'similarity_threshold_overridden', False):
         args.similarity_threshold = optimized_config['similarity_threshold']
-    if not hasattr(args, 'top_k_overridden'):
+    if not getattr(args, 'top_k_overridden', False):
         args.top_k = optimized_config['top_k'] 
-    if not hasattr(args, 'pca_dimensions_overridden'):
+    if not getattr(args, 'pca_dimensions_overridden', False):
         args.pca_dimensions = optimized_config['pca_dimensions']
     
     # Set technical flags
