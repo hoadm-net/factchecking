@@ -6,5 +6,4 @@ openai
 python-dotenv
 transformers
 torch
-faiss-cpu
-scikit-learn 
+faiss-cpu 

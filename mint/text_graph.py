@@ -9,8 +9,6 @@ import numpy as np
 from transformers import AutoTokenizer, AutoModel
 import torch
 import faiss
-from sklearn.decomposition import PCA
-from sklearn.metrics.pairwise import cosine_similarity
 
 
 class TextGraph:
@@ -39,16 +37,14 @@ class TextGraph:
         self.phobert_tokenizer = None
         self.phobert_model = None
         self.word_embeddings = {}  # Cache embeddings
-        self.embedding_dim = 768  # PhoBERT base dimension
-        self.pca_model = None
+        self.embedding_dim = 768  # PhoBERT base dimension (full dimension - no PCA)
         self.faiss_index = None
         self.word_to_index = {}  # Mapping từ word -> index trong faiss
         self.index_to_word = {}  # Mapping ngược lại
         
-        # Semantic similarity parameters
+        # Semantic similarity parameters (optimized for full embeddings)
         self.similarity_threshold = 0.85
         self.top_k_similar = 5
-        self.reduced_dim = 128  # Dimension after PCA reduction
         
         self._init_phobert_model()
     
@@ -786,8 +782,8 @@ Văn bản:
     
 
     
-    def build_semantic_similarity_edges(self, use_pca=True, use_faiss=True):
-        """Xây dựng các cạnh semantic similarity giữa các từ"""
+    def build_semantic_similarity_edges(self, use_faiss=True):
+        """Xây dựng các cạnh semantic similarity giữa các từ (không sử dụng PCA)"""
         print("Đang bắt đầu xây dựng semantic similarity edges...")
         
         # Lấy tất cả word nodes
@@ -812,37 +808,32 @@ Văn bản:
         
         print(f"Đang lấy embeddings cho {len(words)} từ...")
         
-        # Lấy embeddings
+        # Lấy embeddings (sử dụng full PhoBERT embeddings - không PCA)
         embeddings = self.get_word_embeddings(words)
         if embeddings is None:
             print("Không thể lấy embeddings.")
             return
         
         print(f"Đã lấy embeddings với shape: {embeddings.shape}")
-        
-        # Áp dụng PCA để giảm chiều (optional)
-        if use_pca and embeddings.shape[1] > self.reduced_dim:
-            print(f"Đang áp dụng PCA để giảm từ {embeddings.shape[1]} xuống {self.reduced_dim} chiều...")
-            self.pca_model = PCA(n_components=self.reduced_dim)
-            embeddings_reduced = self.pca_model.fit_transform(embeddings)
-            print(f"PCA hoàn thành. Shape mới: {embeddings_reduced.shape}")
-        else:
-            embeddings_reduced = embeddings
+        print("✅ Sử dụng full PhoBERT embeddings (768 dim) - KHÔNG áp dụng PCA")
         
         # Xây dựng Faiss index (optional)
         if use_faiss:
-            print("Đang xây dựng Faiss index...")
-            dimension = embeddings_reduced.shape[1]
+            print("Đang xây dựng Faiss index với full embeddings...")
+            dimension = embeddings.shape[1]
             self.faiss_index = faiss.IndexFlatIP(dimension)  # Inner Product (for cosine similarity)
             
             # Normalize vectors for cosine similarity
-            embeddings_normalized = embeddings_reduced / np.linalg.norm(embeddings_reduced, axis=1, keepdims=True)
+            embeddings_normalized = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
             self.faiss_index.add(embeddings_normalized.astype(np.float32))
             
             # Create mappings
             self.word_to_index = {word: i for i, word in enumerate(words)}
             self.index_to_word = {i: word for i, word in enumerate(words)}
             print("Faiss index đã được xây dựng.")
+        else:
+            # Normalize embeddings để tính cosine similarity nhanh hơn
+            embeddings_normalized = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
         
         # Tìm similar words và tạo edges
         edges_added = 0
@@ -877,7 +868,7 @@ Văn bản:
                                               similarity=float(similarity))
                             edges_added += 1
             else:
-                # Sử dụng brute force comparison
+                # Sử dụng numpy matrix multiplication (nhanh hơn sklearn cho cosine similarity)
                 for j, word2 in enumerate(words):
                     if i >= j:  # Tránh duplicate và self-comparison
                         continue
@@ -888,8 +879,8 @@ Văn bản:
                     if pos1 and pos2 and pos1 != pos2:
                         continue
                     
-                    # Tính cosine similarity
-                    similarity = cosine_similarity([embeddings_reduced[i]], [embeddings_reduced[j]])[0][0]
+                    # Tính cosine similarity với normalized vectors (nhanh hơn)
+                    similarity = np.dot(embeddings_normalized[i], embeddings_normalized[j])
                     
                     if similarity >= self.similarity_threshold:
                         node2 = word_node_mapping[word2]

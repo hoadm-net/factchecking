@@ -1,14 +1,16 @@
-# Tính năng Semantic Similarity với PhoBERT
+# Tính năng Semantic Similarity với PhoBERT (No PCA)
 
 ## Mô tả
 
-TextGraph đã được cập nhật với tính năng **Semantic Similarity** sử dụng PhoBERT-base-v2. Đây là tính năng nặng nhất, cho phép:
+TextGraph đã được tối ưu với tính năng **Semantic Similarity** sử dụng PhoBERT-base-v2. Đây là phiên bản tối ưu, cho phép:
 
-- **Lấy embedding vectors** của tất cả các từ sử dụng PhoBERT-base-v2
-- **Giảm chiều vector** bằng PCA để tối ưu performance
+- **Lấy embedding vectors** của tất cả các từ sử dụng PhoBERT-base-v2 (768 dimensions)
+- **Sử dụng full embeddings** để có độ chính xác cao nhất cho cosine similarity
 - **Xây dựng Faiss index** để tìm kiếm vector nhanh chóng
 - **Tìm top-k từ tương đồng** (cùng POS tag) với cosine similarity > threshold
 - **Tạo semantic edges** giữa các từ có ngữ nghĩa tương đồng
+
+> **⚠️ PCA đã được loại bỏ** vì có thể làm sai lệch cosine similarity relationships
 
 ## Yêu cầu hệ thống
 
@@ -30,19 +32,18 @@ Các thư viện chính:
 
 ## Cấu hình
 
-### Parameters mặc định
+### Parameters mặc định (No PCA)
 ```python
 similarity_threshold = 0.85    # Ngưỡng cosine similarity
 top_k_similar = 5             # Số từ tương đồng tối đa
-reduced_dim = 128             # Số chiều sau PCA
-embedding_dim = 768           # Chiều gốc của PhoBERT
+embedding_dim = 768           # Chiều PhoBERT (full dimensions)
 ```
 
 ### Parameters cho server không GPU
 ```python
-similarity_threshold = 0.7    # Giảm threshold
-top_k_similar = 3            # Giảm top-k  
-reduced_dim = 64             # Giảm PCA dimensions
+similarity_threshold = 0.9    # Tăng threshold để giảm số edge
+top_k_similar = 3            # Giảm top-k để tiết kiệm memory
+use_faiss = False            # Tắt FAISS, dùng numpy dot product
 ```
 
 ## Sử dụng
@@ -64,13 +65,11 @@ text_graph = TextGraph()
 text_graph.build_from_vncorenlp_output(context_sentences, claim, claim_sentences)
 
 # Tùy chỉnh parameters (optional)
-text_graph.similarity_threshold = 0.7
-text_graph.top_k_similar = 3
-text_graph.reduced_dim = 64
+text_graph.similarity_threshold = 0.85  # Giữ nguyên hoặc tăng cho CPU
+text_graph.top_k_similar = 5            # Giảm cho CPU nếu cần
 
-# Build semantic similarity edges
+# Build semantic similarity edges (no PCA)
 edges_added = text_graph.build_semantic_similarity_edges(
-    use_pca=True,      # Sử dụng PCA để giảm chiều
     use_faiss=True     # Sử dụng Faiss để tìm kiếm nhanh
 )
 
@@ -105,23 +104,26 @@ text_graph.visualize(
 )
 ```
 
-## Cách hoạt động
+## Cách hoạt động (Optimized - No PCA)
 
 ### 1. **Embedding Extraction**
 - Sử dụng PhoBERT-base-v2 để lấy embeddings 768 chiều cho mỗi từ
 - Cache embeddings để tránh tính toán lại
+- **Giữ nguyên full 768 dimensions** để có độ chính xác cao nhất
 
-### 2. **Dimensionality Reduction**  
-- Áp dụng PCA để giảm từ 768 xuống `reduced_dim` chiều
-- Giúp giảm memory và tăng tốc độ tìm kiếm
+### 2. **Vector Normalization**  
+- Normalize vectors để tính cosine similarity hiệu quả
+- Sử dụng L2 normalization: `v_norm = v / ||v||`
+- Sau normalize: cosine(a,b) = dot(a_norm, b_norm)
 
-### 3. **Faiss Indexing**
-- Xây dựng `IndexFlatIP` (Inner Product) index
-- Normalize vectors để tính cosine similarity
+### 3. **Faiss Indexing (Optional)**
+- Xây dựng `IndexFlatIP` (Inner Product) index với full embeddings
+- Normalize vectors trước khi add vào index
 - Mapping word ↔ index trong Faiss
 
 ### 4. **Similarity Search**
-- Với mỗi từ, tìm top-k từ có similarity cao nhất
+- **FAISS mode**: Sử dụng Faiss để tìm top-k nhanh chóng
+- **Brute force mode**: Sử dụng numpy dot product (nhanh hơn sklearn)
 - Chỉ kết nối từ cùng POS tag (optional)
 - Chỉ tạo edge nếu similarity ≥ threshold
 
@@ -148,11 +150,11 @@ text_graph.visualize(
 
 ### Tối ưu cho server không GPU
 ```python
-# Giảm threshold để dễ tìm thấy similar words
-text_graph.similarity_threshold = 0.6
+# Tăng threshold để giảm số edges
+text_graph.similarity_threshold = 0.9
 
-# Giảm dimensions
-text_graph.reduced_dim = 32
+# Giảm top-k để tiết kiệm memory
+text_graph.top_k_similar = 3
 
 # Chỉ test trên text ngắn
 context = "Câu ngắn để test tính năng"
@@ -181,8 +183,8 @@ pip install faiss-cpu  # hoặc faiss-gpu nếu có GPU
 ```
 
 ### Lỗi OutOfMemory
-- Giảm `reduced_dim`
-- Giảm `top_k_similar`  
+- Giảm `top_k_similar`
+- Tăng `similarity_threshold` để có ít edges hơn
 - Test trên text ngắn hơn
 - Đóng các ứng dụng khác
 
@@ -194,8 +196,9 @@ pip install faiss-cpu  # hoặc faiss-gpu nếu có GPU
 
 ### Chậm quá
 - Sử dụng GPU thay vì CPU
-- Giảm `reduced_dim` 
-- Set `use_pca=True, use_faiss=True`
+- Tăng `similarity_threshold` để giảm computation
+- Giảm `top_k_similar`
+- Set `use_faiss=True`
 - Cache embeddings được sử dụng
 
 ## Ví dụ kết quả

@@ -80,20 +80,9 @@ Note: GPU/CPU auto-detection enabled. System will automatically optimize for you
         help=f'Number of most similar words to connect (default: auto-optimized, base: {config["top_k"]})'
     )
     semantic_group.add_argument(
-        '--pca-dimensions', '-pca',
-        type=int,
-        default=config['pca_dimensions'],
-        help=f'PCA dimensions for embeddings reduction (default: auto-optimized, base: {config["pca_dimensions"]})'
-    )
-    semantic_group.add_argument(
-        '--disable-pca',
-        action='store_true',
-        help='Disable PCA dimensionality reduction'
-    )
-    semantic_group.add_argument(
         '--disable-faiss',
         action='store_true',
-        help='Disable FAISS indexing (use brute force search)'
+        help='Disable FAISS indexing (use brute force search with full embeddings)'
     )
     
     # OpenAI parameters
@@ -203,8 +192,7 @@ def track_user_overrides(args, parser):
     
     # Mark which values were overridden by user
     args.similarity_threshold_overridden = current['similarity_threshold'] != defaults['similarity_threshold']
-    args.top_k_overridden = current['top_k'] != defaults['top_k'] 
-    args.pca_dimensions_overridden = current['pca_dimensions'] != defaults['pca_dimensions']
+    args.top_k_overridden = current['top_k'] != defaults['top_k']
 
 def main():
     """Main CLI entry point"""
@@ -241,7 +229,7 @@ def main():
         print(f"  Similarity threshold: {args.similarity_threshold}")
         print(f"  Top-K: {args.top_k}")
         print(f"  OpenAI model: {args.openai_model}")
-        print(f"  PCA dimensions: {args.pca_dimensions}")
+        print(f"  Embedding dimensions: 768 (full PhoBERT)")
         print(f"  Use FAISS: {not args.disable_faiss}")
         print()
     

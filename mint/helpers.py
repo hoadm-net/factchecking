@@ -55,23 +55,19 @@ def detect_device():
     return device_info
 
 def get_optimized_config_for_device(device_info, base_config):
-    """Get optimized configuration based on detected device"""
+    """Get optimized configuration based on detected device (PCA removed)"""
     if device_info['use_gpu_optimizations']:
-        # GPU optimizations - có thể handle more intensive tasks
+        # GPU optimizations - sử dụng full embeddings với FAISS
         return {
             'similarity_threshold': base_config.get('similarity_threshold', 0.85),
             'top_k': base_config.get('top_k', 5),
-            'pca_dimensions': base_config.get('pca_dimensions', 128),
-            'use_pca': base_config.get('use_pca', True),
             'use_faiss': base_config.get('use_faiss', True)
         }
     else:
-        # CPU optimizations - reduce computational load
+        # CPU optimizations - giảm top_k, tăng threshold, có thể tắt FAISS
         return {
             'similarity_threshold': base_config.get('cpu_similarity_threshold', 0.9),
-            'top_k': base_config.get('cpu_top_k', 2),
-            'pca_dimensions': base_config.get('cpu_pca_dimensions', 32),
-            'use_pca': True,  # PCA vẫn có thể giúp trên CPU
+            'top_k': base_config.get('cpu_top_k', 3),
             'use_faiss': base_config.get('cpu_use_faiss', False)  # FAISS có thể problematic trên một số CPU
         }
 
@@ -80,11 +76,9 @@ def load_config():
     load_dotenv()
     
     config = {
-        # Semantic Similarity defaults
+        # Semantic Similarity defaults (PCA removed)
         'similarity_threshold': float(os.getenv('DEFAULT_SIMILARITY_THRESHOLD', '0.85')),
         'top_k': int(os.getenv('DEFAULT_TOP_K', '5')),
-        'pca_dimensions': int(os.getenv('DEFAULT_PCA_DIMENSIONS', '128')),
-        'use_pca': os.getenv('DEFAULT_USE_PCA', 'true').lower() == 'true',
         'use_faiss': os.getenv('DEFAULT_USE_FAISS', 'true').lower() == 'true',
         
         # OpenAI defaults
@@ -106,10 +100,9 @@ def load_config():
         # Demo data
         'demo_data_path': os.getenv('DEMO_DATA_PATH', 'data/demo.json'),
         
-        # CPU mode (low performance fallback)
-        'cpu_similarity_threshold': float(os.getenv('CPU_SIMILARITY_THRESHOLD', '0.7')),
+        # CPU mode (low performance fallback - no PCA)
+        'cpu_similarity_threshold': float(os.getenv('CPU_SIMILARITY_THRESHOLD', '0.9')),
         'cpu_top_k': int(os.getenv('CPU_TOP_K', '3')),
-        'cpu_pca_dimensions': int(os.getenv('CPU_PCA_DIMENSIONS', '64')),
         'cpu_use_faiss': os.getenv('CPU_USE_FAISS', 'false').lower() == 'true',
     }
     
@@ -139,7 +132,7 @@ def load_demo_data():
         return fallback_data["context"], fallback_data["claim"]
 
 def apply_device_optimizations(args, device_info, verbose=False):
-    """Apply device-specific optimizations to arguments"""
+    """Apply device-specific optimizations to arguments (PCA removed)"""
     config = load_config()
     optimized_config = get_optimized_config_for_device(device_info, config)
     
@@ -147,21 +140,18 @@ def apply_device_optimizations(args, device_info, verbose=False):
     if not getattr(args, 'similarity_threshold_overridden', False):
         args.similarity_threshold = optimized_config['similarity_threshold']
     if not getattr(args, 'top_k_overridden', False):
-        args.top_k = optimized_config['top_k'] 
-    if not getattr(args, 'pca_dimensions_overridden', False):
-        args.pca_dimensions = optimized_config['pca_dimensions']
+        args.top_k = optimized_config['top_k']
     
     # Set technical flags
-    args.disable_pca = not optimized_config['use_pca']
     args.disable_faiss = not optimized_config['use_faiss']
     
     if verbose:
         optimization_type = "GPU" if device_info['use_gpu_optimizations'] else "CPU"
-        print(f"🔧 {optimization_type} optimizations applied:")
+        print(f"🔧 {optimization_type} optimizations applied (full embeddings - no PCA):")
         print(f"  Similarity threshold: {args.similarity_threshold}")
         print(f"  Top-K: {args.top_k}")
-        print(f"  PCA dimensions: {args.pca_dimensions}")
         print(f"  Use FAISS: {not args.disable_faiss}")
+        print(f"  Embedding dimensions: 768 (full PhoBERT)")
 
 def validate_inputs(args):
     """Validate and extract input data from arguments"""
@@ -265,13 +255,12 @@ def process_text_data(model, context, claim, verbose=False):
         raise RuntimeError(f"Failed to process text data: {e}")
 
 def configure_textgraph_parameters(text_graph, args):
-    """Configure TextGraph parameters from arguments with .env defaults"""
+    """Configure TextGraph parameters from arguments with .env defaults (PCA removed)"""
     config = load_config()
     
     # Use CLI args if provided, otherwise use .env defaults
     text_graph.similarity_threshold = getattr(args, 'similarity_threshold', config['similarity_threshold'])
     text_graph.top_k_similar = getattr(args, 'top_k', config['top_k'])
-    text_graph.reduced_dim = getattr(args, 'pca_dimensions', config['pca_dimensions'])
     
     # OpenAI parameters
     if hasattr(text_graph, '_update_openai_model'):
@@ -306,16 +295,14 @@ def build_complete_graph(context, claim, context_sentences, claim_sentences, arg
             if args.verbose:
                 print(f"  ⚠️ Entity extraction failed: {e}")
     
-    # Semantic similarity
+    # Semantic similarity (without PCA)
     if not args.disable_semantic:
         if args.verbose:
-            print("  Building semantic similarity edges...")
+            print("  Building semantic similarity edges (full embeddings - no PCA)...")
         try:
-            use_pca = not args.disable_pca
             use_faiss = not args.disable_faiss
             
             edges_added = text_graph.build_semantic_similarity_edges(
-                use_pca=use_pca, 
                 use_faiss=use_faiss
             )
             if args.verbose:
