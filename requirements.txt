@@ -1,0 +1,10 @@
+py_vncorenlp
+networkx
+matplotlib
+numpy
+openai
+python-dotenv
+transformers
+torch
+faiss-cpu
+scikit-learn 
