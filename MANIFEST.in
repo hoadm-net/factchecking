@@ -1,0 +1,47 @@
+# Include documentation
+include README.md
+include README_ENTITIES.md  
+include README_SEMANTIC.md
+include CHANGELOG.md
+include LICENSE
+
+# Include configuration files
+include requirements.txt
+include .env.example
+
+# Include package data
+recursive-include mint *.py
+recursive-include mint *.md
+recursive-include mint *.txt
+
+# Include demo scripts
+include main.py
+include demo_*.py
+
+# Exclude development and build files
+exclude .gitignore
+exclude setup.cfg
+exclude tox.ini
+exclude .travis.yml
+exclude .github
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * .DS_Store
+recursive-exclude * .git*
+
+# Exclude large model files and caches
+exclude vncorenlp/
+exclude *.gexf
+exclude *.graphml
+exclude text_graph.*
+recursive-exclude * *.jar
+recursive-exclude * .cache
+recursive-exclude * embeddings_cache
+recursive-exclude * model_cache
+recursive-exclude * transformers_cache
+recursive-exclude * .huggingface
+
+# Exclude virtual environments
+exclude venv/
+exclude env/
+exclude ENV/ 
