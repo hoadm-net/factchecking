@@ -179,24 +179,19 @@ Note: GPU/CPU auto-detection enabled. System will automatically optimize for you
         help=f'Figure size for visualization (width,height) (default: {config["figure_width"]},{config["figure_height"]})'
     )
     
-    # System options
+    # System and paths
     system_group = parser.add_argument_group('System Options')
-    system_group.add_argument(
-        '--vncorenlp-path', '-vp',
-        type=str,
-        default=config['vncorenlp_path'],
-        help=f'Path to VnCoreNLP models (default: {config["vncorenlp_path"]})'
-    )
-    system_group.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose output'
-    )
-    system_group.add_argument(
-        '--quiet', '-q',
-        action='store_true',
-        help='Suppress non-essential output'
-    )
+    system_group.add_argument('--vncorenlp-path', 
+                            default=config['vncorenlp_path'],
+                            help=f'Path to VnCoreNLP directory (default: {config["vncorenlp_path"]})')
+    system_group.add_argument('--no-auto-download', action='store_true',
+                            help='Disable automatic VnCoreNLP download')
+    system_group.add_argument('--force-download', action='store_true',
+                            help='Force re-download VnCoreNLP even if exists')
+    system_group.add_argument('--verbose', '-v', action='store_true',
+                            help='Enable verbose output')
+    system_group.add_argument('--quiet', '-q', action='store_true',
+                            help='Suppress all output except errors')
     
     return parser
 
@@ -251,10 +246,24 @@ def main():
         print()
     
     try:
+        # Handle VnCoreNLP download options
+        auto_download = not args.no_auto_download
+        
+        # Force download if requested
+        if args.force_download:
+            if args.verbose:
+                print("🔄 Force downloading VnCoreNLP...")
+            try:
+                from .helpers import download_vncorenlp
+                download_vncorenlp(args.vncorenlp_path, verbose=args.verbose)
+            except Exception as e:
+                print(f"❌ Failed to download VnCoreNLP: {e}")
+                sys.exit(1)
+        
         # Setup VnCoreNLP
         if not args.quiet:
             print("🤖 Setting up VnCoreNLP...")
-        model = setup_vncorenlp(args.vncorenlp_path, args.verbose)
+        model = setup_vncorenlp(args.vncorenlp_path, args.verbose, auto_download)
         
         # Process text data
         if not args.quiet:
@@ -290,6 +299,51 @@ def main():
         if args.verbose:
             import traceback
             traceback.print_exc()
+        sys.exit(1)
+
+def download_command():
+    """Separate command to download VnCoreNLP"""
+    import argparse
+    import os
+    import shutil
+    
+    parser = argparse.ArgumentParser(
+        description='Download VnCoreNLP models and tools',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  mint-download                           # Download to default location
+  mint-download --path ./my-vncorenlp     # Download to specific path
+  mint-download --force                   # Force re-download
+        """
+    )
+    
+    parser.add_argument('--path', '-p', 
+                       default='vncorenlp',
+                       help='Download path for VnCoreNLP (default: vncorenlp)')
+    parser.add_argument('--force', '-f', 
+                       action='store_true',
+                       help='Force download even if already exists')
+    parser.add_argument('--verbose', '-v', 
+                       action='store_true',
+                       help='Enable verbose output')
+    
+    args = parser.parse_args()
+    
+    try:
+        from .helpers import download_vncorenlp
+        
+        if args.force:
+            if os.path.exists(args.path):
+                if args.verbose:
+                    print(f"🗑️ Removing existing VnCoreNLP at: {args.path}")
+                shutil.rmtree(args.path)
+        
+        download_vncorenlp(args.path, verbose=args.verbose)
+        print(f"✅ VnCoreNLP downloaded successfully to: {os.path.abspath(args.path)}")
+        
+    except Exception as e:
+        print(f"❌ Failed to download VnCoreNLP: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

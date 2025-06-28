@@ -112,6 +112,7 @@ setup(
         "console_scripts": [
             "mint-graph=mint.cli:main",
             "textgraph=mint.cli:main",
+            "mint-download=mint.cli:download_command",
         ],
     },
     keywords=[

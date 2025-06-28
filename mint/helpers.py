@@ -207,8 +207,29 @@ def validate_inputs(args):
     
     return context.strip(), claim.strip(), device_info
 
-def setup_vncorenlp(vncorenlp_path, verbose=False):
-    """Setup VnCoreNLP model"""
+def setup_vncorenlp(vncorenlp_path, verbose=False, auto_download=True):
+    """Setup VnCoreNLP model with automatic download if needed"""
+    
+    # Convert to absolute path
+    if not os.path.isabs(vncorenlp_path):
+        vncorenlp_path = os.path.abspath(vncorenlp_path)
+    
+    # Check if VnCoreNLP exists
+    jar_path = os.path.join(vncorenlp_path, "VnCoreNLP-1.2.jar")
+    models_path = os.path.join(vncorenlp_path, "models")
+    
+    if not (os.path.exists(jar_path) and os.path.exists(models_path)):
+        if auto_download:
+            if verbose:
+                print(f"  VnCoreNLP not found at: {vncorenlp_path}")
+                print(f"  Auto-downloading VnCoreNLP...")
+            try:
+                vncorenlp_path = download_vncorenlp(vncorenlp_path, verbose)
+            except Exception as e:
+                raise RuntimeError(f"Failed to auto-download VnCoreNLP: {e}")
+        else:
+            raise RuntimeError(f"VnCoreNLP not found at: {vncorenlp_path}")
+    
     try:
         if verbose:
             print(f"  Loading VnCoreNLP from: {vncorenlp_path}")
@@ -437,4 +458,39 @@ def save_outputs(text_graph, args):
 
 def load_sample_data():
     """Load sample data for demo (deprecated, use load_demo_data instead)"""
-    return load_demo_data() 
+    return load_demo_data()
+
+def download_vncorenlp(target_dir="vncorenlp", verbose=False):
+    """Download and setup VnCoreNLP automatically using py_vncorenlp"""
+    
+    # Convert to absolute path
+    if not os.path.isabs(target_dir):
+        target_dir = os.path.abspath(target_dir)
+    
+    # Check if already exists
+    jar_path = os.path.join(target_dir, "VnCoreNLP-1.2.jar")
+    models_path = os.path.join(target_dir, "models")
+    
+    if os.path.exists(jar_path) and os.path.exists(models_path):
+        if verbose:
+            print(f"✅ VnCoreNLP already exists at: {target_dir}")
+        return target_dir
+    
+    if verbose:
+        print(f"📥 Downloading VnCoreNLP to: {target_dir}")
+    
+    # Create directory if it doesn't exist
+    os.makedirs(target_dir, exist_ok=True)
+    
+    try:
+        # Use py_vncorenlp's built-in download function
+        import py_vncorenlp
+        py_vncorenlp.download_model(save_dir=target_dir)
+        
+        if verbose:
+            print("  ✅ VnCoreNLP downloaded successfully!")
+        
+        return target_dir
+        
+    except Exception as e:
+        raise RuntimeError(f"Failed to download VnCoreNLP: {e}") 
