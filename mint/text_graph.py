@@ -566,13 +566,14 @@ class TextGraph:
     def _init_openai_client(self):
         """Khởi tạo OpenAI client"""
         try:
-            api_key = os.getenv('OPENAI_API_KEY')
+            # Try multiple key names for backward compatibility
+            api_key = os.getenv('OPENAI_KEY') or os.getenv('OPENAI_API_KEY')
             if api_key and api_key != 'your_openai_api_key_here':
                 self.openai_client = OpenAI(api_key=api_key)
                 print("OpenAI client đã được khởi tạo thành công.")
             else:
-                print("Warning: OPENAI_API_KEY không được tìm thấy trong .env file.")
-                print("Vui lòng tạo file .env và thêm OPENAI_API_KEY=your_api_key")
+                print("Warning: OPENAI_KEY hoặc OPENAI_API_KEY không được tìm thấy trong .env file.")
+                print("Vui lòng tạo file .env và thêm OPENAI_KEY=your_api_key")
         except Exception as e:
             print(f"Lỗi khi khởi tạo OpenAI client: {e}")
     
@@ -590,6 +591,15 @@ class TextGraph:
     def connect_entity_to_sentence(self, entity_node, sentence_node):
         """Kết nối entity với sentence"""
         self.graph.add_edge(entity_node, sentence_node, relation="mentioned_in", edge_type="entity_structural")
+    
+    def _update_openai_model(self, model=None, temperature=None, max_tokens=None):
+        """Update OpenAI model parameters"""
+        if model:
+            self.openai_model = model
+        if temperature is not None:
+            self.openai_temperature = temperature  
+        if max_tokens is not None:
+            self.openai_max_tokens = max_tokens
     
     def extract_entities_with_openai(self, context_text):
         """Trích xuất entities từ context bằng OpenAI GPT-4o-mini"""
@@ -617,17 +627,31 @@ Văn bản:
 {context_text}
 """
 
+            # Use parameters from CLI if available
+            model = getattr(self, 'openai_model', 'gpt-4o-mini')
+            temperature = getattr(self, 'openai_temperature', 0.0)
+            max_tokens = getattr(self, 'openai_max_tokens', 1000)
+
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.0,
-                max_tokens=1000
+                temperature=temperature,
+                max_tokens=max_tokens
             )
             
             # Parse response
             response_text = response.choices[0].message.content.strip()
+            
+            # Strip markdown code blocks if present
+            if response_text.startswith('```json'):
+                response_text = response_text[7:]  # Remove '```json'
+            if response_text.startswith('```'):
+                response_text = response_text[3:]   # Remove '```'
+            if response_text.endswith('```'):
+                response_text = response_text[:-3]  # Remove ending '```'
+            response_text = response_text.strip()
             
             # Cố gắng parse JSON
             try:

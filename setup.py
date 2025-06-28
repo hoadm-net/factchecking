@@ -110,7 +110,8 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "mint-demo=mint.cli:main",  # Command line interface (if needed)
+            "mint-graph=mint.cli:main",
+            "textgraph=mint.cli:main",
         ],
     },
     keywords=[
