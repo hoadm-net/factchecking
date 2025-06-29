@@ -1,0 +1,5 @@
+[console_scripts]
+mint-download = mint.cli:download_command
+mint-graph = mint.cli:main
+textgraph = mint.cli:main
+

@@ -9,6 +9,7 @@ import numpy as np
 from transformers import AutoTokenizer, AutoModel
 import torch
 import faiss
+from .beam_search import BeamSearchPathFinder
 
 
 class TextGraph:
@@ -27,6 +28,19 @@ class TextGraph:
         self.sentence_nodes = {}
         self.claim_node = None
         self.entity_nodes = {}  # Thêm dictionary để quản lý entity nodes
+        
+        # POS tag filtering configuration
+        self.enable_pos_filtering = True  # Mặc định bật để giảm nhiễu
+        self.important_pos_tags = {
+            'N',    # Danh từ thường
+            'Np',   # Danh từ riêng
+            'V',    # Động từ
+            'A',    # Tính từ
+            'Nc',   # Danh từ chỉ người
+            'M',    # Số từ
+            'R',    # Trạng từ (có thể tranh luận)
+            'P'     # Đại từ (có thể tranh luận)
+        }
         
         # Load environment variables
         load_dotenv()
@@ -48,8 +62,42 @@ class TextGraph:
         
         self._init_phobert_model()
     
+    def set_pos_filtering(self, enable=True, custom_pos_tags=None):
+        """
+        Cấu hình lọc từ loại cho word nodes
+        
+        Args:
+            enable (bool): Bật/tắt tính năng lọc từ loại
+            custom_pos_tags (set): Tập hợp các từ loại muốn giữ lại (nếu None thì dùng mặc định)
+        """
+        self.enable_pos_filtering = enable
+        if custom_pos_tags is not None:
+            self.important_pos_tags = set(custom_pos_tags)
+    
+    def is_important_word(self, word, pos_tag):
+        """
+        Kiểm tra xem từ có quan trọng hay không dựa trên từ loại
+        
+        Args:
+            word (str): Từ cần kiểm tra
+            pos_tag (str): Từ loại của từ
+            
+        Returns:
+            bool: True nếu từ quan trọng và nên tạo word node
+        """
+        # Nếu không bật lọc từ loại, tất cả từ đều quan trọng
+        if not self.enable_pos_filtering:
+            return True
+            
+        # Kiểm tra từ loại có trong danh sách quan trọng không
+        return pos_tag in self.important_pos_tags
+    
     def add_word_node(self, word, pos_tag=None, lemma=None):
-        """Thêm word node vào đồ thị"""
+        """Thêm word node vào đồ thị (có thể lọc theo từ loại)"""
+        # Kiểm tra xem từ có quan trọng không
+        if not self.is_important_word(word, pos_tag):
+            return None  # Không tạo node cho từ không quan trọng
+            
         if word not in self.word_nodes:
             node_id = f"word_{len(self.word_nodes)}"
             self.word_nodes[word] = node_id
@@ -112,10 +160,12 @@ class TextGraph:
                 token_index = token.get("index", 0)
                 
                 word_node = self.add_word_node(word, pos_tag, lemma)
-                self.connect_word_to_sentence(word_node, sentence_node)
                 
-                # Lưu mapping để tạo dependency links sau
-                token_index_to_node[token_index] = word_node
+                # Chỉ tạo kết nối nếu word_node được tạo thành công (không bị lọc)
+                if word_node is not None:
+                    self.connect_word_to_sentence(word_node, sentence_node)
+                    # Lưu mapping để tạo dependency links sau
+                    token_index_to_node[token_index] = word_node
             
             # Tạo dependency connections giữa các từ trong câu
             for token in sentence_tokens:
@@ -123,8 +173,10 @@ class TextGraph:
                 head_index = token.get("head", 0)
                 dep_label = token.get("depLabel", "")
                 
-                # Nếu có head (không phải root) và head tồn tại trong câu
-                if head_index > 0 and head_index in token_index_to_node:
+                # Chỉ tạo dependency nếu cả dependent và head đều tồn tại trong mapping
+                if (head_index > 0 and 
+                    token_index in token_index_to_node and 
+                    head_index in token_index_to_node):
                     dependent_node = token_index_to_node[token_index]
                     head_node = token_index_to_node[head_index]
                     self.connect_dependency(dependent_node, head_node, dep_label)
@@ -142,10 +194,12 @@ class TextGraph:
                 token_index = token.get("index", 0)
                 
                 word_node = self.add_word_node(word, pos_tag, lemma)
-                self.connect_word_to_claim(word_node, claim_node)
                 
-                # Lưu mapping cho dependency links
-                claim_token_index_to_node[token_index] = word_node
+                # Chỉ tạo kết nối nếu word_node được tạo thành công (không bị lọc)
+                if word_node is not None:
+                    self.connect_word_to_claim(word_node, claim_node)
+                    # Lưu mapping cho dependency links
+                    claim_token_index_to_node[token_index] = word_node
             
             # Tạo dependency connections trong claim
             for token in sentence_tokens:
@@ -153,8 +207,10 @@ class TextGraph:
                 head_index = token.get("head", 0)
                 dep_label = token.get("depLabel", "")
                 
-                # Nếu có head (không phải root) và head tồn tại trong claim
-                if head_index > 0 and head_index in claim_token_index_to_node:
+                # Chỉ tạo dependency nếu cả dependent và head đều tồn tại trong mapping
+                if (head_index > 0 and 
+                    token_index in claim_token_index_to_node and 
+                    head_index in claim_token_index_to_node):
                     dependent_node = claim_token_index_to_node[token_index]
                     head_node = claim_token_index_to_node[head_index]
                     self.connect_dependency(dependent_node, head_node, dep_label)
@@ -780,8 +836,6 @@ Văn bản:
         
         return cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
     
-
-    
     def build_semantic_similarity_edges(self, use_faiss=True):
         """Xây dựng các cạnh semantic similarity giữa các từ (không sử dụng PCA)"""
         print("Đang bắt đầu xây dựng semantic similarity edges...")
@@ -920,4 +974,112 @@ Văn bản:
                 "0.90-0.95": len([s for s in similarities if 0.90 <= s < 0.95]),
                 "0.95-1.00": len([s for s in similarities if 0.95 <= s <= 1.00])
             }
+        }
+    
+    def beam_search_paths(self, beam_width=10, max_depth=6, max_paths=20):
+        """
+        Tìm đường đi từ claim đến sentence nodes bằng Beam Search
+        
+        Args:
+            beam_width (int): Độ rộng beam search
+            max_depth (int): Độ sâu tối đa của path
+            max_paths (int): Số lượng paths tối đa trả về
+            
+        Returns:
+            List[Path]: Danh sách paths tốt nhất
+        """
+        if not self.claim_node:
+            print("⚠️ Không có claim node để thực hiện beam search")
+            return []
+            
+        # Tạo BeamSearchPathFinder
+        path_finder = BeamSearchPathFinder(
+            text_graph=self,
+            beam_width=beam_width,
+            max_depth=max_depth
+        )
+        
+        # Tìm paths
+        paths = path_finder.find_best_paths(max_paths=max_paths)
+        
+        return paths
+    
+    def export_beam_search_results(self, paths, output_dir="output", file_prefix="beam_search"):
+        """
+        Export kết quả beam search ra files
+        
+        Args:
+            paths: Danh sách paths từ beam search
+            output_dir (str): Thư mục output
+            file_prefix (str): Prefix cho tên file
+            
+        Returns:
+            tuple: (json_file_path, summary_file_path)
+        """
+        if not paths:
+            print("⚠️ Không có paths để export")
+            return None, None
+            
+        # Tạo BeamSearchPathFinder để export
+        path_finder = BeamSearchPathFinder(self)
+        
+        # Export JSON và summary với absolute paths
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Ensure we use the correct directory
+        current_dir = os.getcwd()
+        if current_dir.endswith('vncorenlp'):
+            # If we're in vncorenlp directory, go back to parent
+            current_dir = os.path.dirname(current_dir)
+        
+        json_file = os.path.join(current_dir, output_dir, f"{file_prefix}_{timestamp}.json")
+        summary_file = os.path.join(current_dir, output_dir, f"{file_prefix}_summary_{timestamp}.txt")
+        
+        json_path = path_finder.export_paths_to_file(paths, json_file)
+        summary_path = path_finder.export_paths_summary(paths, summary_file)
+        
+        return json_path, summary_path
+    
+    def analyze_paths_quality(self, paths):
+        """
+        Phân tích chất lượng của các paths tìm được
+        
+        Args:
+            paths: Danh sách paths
+            
+        Returns:
+            dict: Thống kê về paths
+        """
+        if not paths:
+            return {
+                'total_paths': 0,
+                'avg_score': 0,
+                'avg_length': 0,
+                'paths_to_sentences': 0,
+                'paths_through_entities': 0
+            }
+            
+        total_paths = len(paths)
+        scores = [p.score for p in paths]
+        lengths = [len(p.nodes) for p in paths]
+        
+        sentences_reached = sum(1 for p in paths if any(
+            node.startswith('sentence') for node in p.nodes
+        ))
+        
+        entities_visited = sum(1 for p in paths if p.entities_visited)
+        
+        return {
+            'total_paths': total_paths,
+            'avg_score': sum(scores) / total_paths if scores else 0,
+            'max_score': max(scores) if scores else 0,
+            'min_score': min(scores) if scores else 0,
+            'avg_length': sum(lengths) / total_paths if lengths else 0,
+            'max_length': max(lengths) if lengths else 0,
+            'min_length': min(lengths) if lengths else 0,
+            'paths_to_sentences': sentences_reached,
+            'paths_through_entities': entities_visited,
+            'sentence_reach_rate': sentences_reached / total_paths if total_paths > 0 else 0,
+            'entity_visit_rate': entities_visited / total_paths if total_paths > 0 else 0
         } 

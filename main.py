@@ -36,14 +36,23 @@ Quick Examples:
 4. Tắt tính năng:
    mint-graph --demo --disable-entities --disable-semantic
 
-5. Tùy chỉnh tham số:
+5. Tắt lọc từ loại (mặc định đã bật):
+   mint-graph --demo --disable-pos-filtering --verbose
+
+6. Tùy chỉnh auto-save (mặc định đã bật):
+   mint-graph --demo --auto-save-path "my_graphs/graph_{timestamp}.gexf" --verbose
+
+7. Beam Search để tìm đường đi từ claim đến sentences:
+   mint-graph --demo --beam-search --beam-width 15 --beam-max-depth 8 --verbose
+
+8. Tùy chỉnh tham số:
    mint-graph --demo --similarity-threshold 0.8 --top-k 5 --openai-model gpt-4o
 
-6. Lưu nhiều format:
+9. Lưu nhiều format:
    mint-graph --demo --export-image graph.png --export-json data.json --export-graph graph.gexf
 
-7. Chế độ yên lặng:
-   mint-graph --demo --quiet --disable-visualization
+10. Chế độ yên lặng:
+    mint-graph --demo --quiet --disable-visualization
 
 Full Help:
   mint-graph --help
@@ -63,6 +72,12 @@ Các tham số chính:
   -q, --quiet           : Yên lặng
   --disable-entities    : Tắt trích xuất entities
   --disable-semantic    : Tắt semantic similarity
+  --disable-pos-filtering: Tắt lọc từ loại (mặc định đã bật)
+  --auto-save-path      : Đường dẫn auto-save (mặc định: output/graph_auto_{timestamp}.gexf)
+  --beam-search         : Bật Beam Search tìm đường đi từ claim đến sentences
+  --beam-width          : Độ rộng beam search (mặc định: 10)
+  --beam-max-depth      : Độ sâu tối đa (mặc định: 6)
+  --beam-max-paths      : Số paths tối đa (mặc định: 20)
 
 Note: Đảm bảo đã cài đặt dependencies và có file .env với OPENAI_KEY
 """)

@@ -125,6 +125,17 @@ Note: GPU/CPU auto-detection enabled. System will automatically optimize for you
         help='Disable dependency parsing edges'
     )
     feature_group.add_argument(
+        '--disable-pos-filtering',
+        action='store_true',
+        help='Disable POS tag filtering for word nodes (default: enabled to reduce noise)'
+    )
+    feature_group.add_argument(
+        '--pos-tags',
+        type=str,
+        default='N,Np,V,A,Nc,M,R,P',
+        help='Comma-separated list of POS tags to include when POS filtering is enabled (default: N,Np,V,A,Nc,M,R,P)'
+    )
+    feature_group.add_argument(
         '--enable-statistics', '-s',
         action='store_true',
         default=config['enable_statistics'],
@@ -155,6 +166,51 @@ Note: GPU/CPU auto-detection enabled. System will automatically optimize for you
         type=str,
         default=None,
         help='Export graph data to JSON file'
+    )
+    output_group.add_argument(
+        '--auto-save-graph',
+        action='store_true',
+        default=config.get('auto_save_graph', True),
+        help=f'Automatically save graph after building (default: {config.get("auto_save_graph", True)})'
+    )
+    output_group.add_argument(
+        '--auto-save-path',
+        type=str,
+        default=config.get('auto_save_path', 'output/graph_auto_{timestamp}.gexf'),
+        help=f'Path pattern for auto-saved graph (default: {config.get("auto_save_path", "output/graph_auto_{{timestamp}}.gexf")})'
+    )
+    
+    # Beam Search options
+    beam_group = parser.add_argument_group('Beam Search Options')
+    beam_group.add_argument(
+        '--beam-search',
+        action='store_true',
+        default=config.get('enable_beam_search', False),
+        help='Enable beam search to find paths from claim to sentences'
+    )
+    beam_group.add_argument(
+        '--beam-width',
+        type=int,
+        default=config.get('beam_width', 10),
+        help=f'Beam width for beam search (default: {config.get("beam_width", 10)})'
+    )
+    beam_group.add_argument(
+        '--beam-max-depth',
+        type=int,
+        default=config.get('beam_max_depth', 6),
+        help=f'Maximum depth for beam search paths (default: {config.get("beam_max_depth", 6)})'
+    )
+    beam_group.add_argument(
+        '--beam-max-paths',
+        type=int,
+        default=config.get('beam_max_paths', 20),
+        help=f'Maximum number of paths to return (default: {config.get("beam_max_paths", 20)})'
+    )
+    beam_group.add_argument(
+        '--beam-export-dir',
+        type=str,
+        default=config.get('beam_export_dir', 'output'),
+        help=f'Directory to export beam search results (default: {config.get("beam_export_dir", "output")})'
     )
     output_group.add_argument(
         '--disable-visualization',

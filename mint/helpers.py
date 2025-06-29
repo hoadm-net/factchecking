@@ -97,6 +97,17 @@ def load_config():
         'enable_statistics': os.getenv('DEFAULT_ENABLE_STATISTICS', 'true').lower() == 'true',
         'enable_visualization': os.getenv('DEFAULT_ENABLE_VISUALIZATION', 'true').lower() == 'true',
         
+        # Auto-save defaults
+        'auto_save_graph': os.getenv('DEFAULT_AUTO_SAVE_GRAPH', 'true').lower() == 'true',
+        'auto_save_path': os.getenv('DEFAULT_AUTO_SAVE_PATH', 'output/graph_auto_{timestamp}.gexf'),
+        
+        # Beam search defaults
+        'enable_beam_search': os.getenv('DEFAULT_ENABLE_BEAM_SEARCH', 'false').lower() == 'true',
+        'beam_width': int(os.getenv('DEFAULT_BEAM_WIDTH', '10')),
+        'beam_max_depth': int(os.getenv('DEFAULT_BEAM_MAX_DEPTH', '6')),
+        'beam_max_paths': int(os.getenv('DEFAULT_BEAM_MAX_PATHS', '20')),
+        'beam_export_dir': os.getenv('DEFAULT_BEAM_EXPORT_DIR', 'output'),
+        
         # Demo data
         'demo_data_path': os.getenv('DEMO_DATA_PATH', 'data/demo.json'),
         
@@ -278,6 +289,20 @@ def build_complete_graph(context, claim, context_sentences, claim_sentences, arg
     # Configure parameters
     configure_textgraph_parameters(text_graph, args)
     
+    # Configure POS filtering (mặc định bật, có thể tắt bằng --disable-pos-filtering)
+    if getattr(args, 'disable_pos_filtering', False):
+        text_graph.set_pos_filtering(enable=False)
+        if args.verbose:
+            print("  ⚠️ POS filtering disabled - all words will be included")
+    else:
+        # POS filtering được bật mặc định, có thể tùy chỉnh tags
+        custom_pos_tags = None
+        if hasattr(args, 'pos_tags') and args.pos_tags:
+            custom_pos_tags = [tag.strip() for tag in args.pos_tags.split(',')]
+        text_graph.set_pos_filtering(enable=True, custom_pos_tags=custom_pos_tags)
+        if args.verbose:
+            print(f"  ✅ POS filtering enabled. Using tags: {text_graph.important_pos_tags}")
+    
     # Build basic graph
     if args.verbose:
         print("  Building basic graph structure...")
@@ -310,6 +335,59 @@ def build_complete_graph(context, claim, context_sentences, claim_sentences, arg
         except Exception as e:
             if args.verbose:
                 print(f"  ⚠️ Semantic similarity failed: {e}")
+    
+    # Auto-save graph if enabled
+    if getattr(args, 'auto_save_graph', True):
+        try:
+            auto_save_path = getattr(args, 'auto_save_path', 'output/graph_auto_{timestamp}.gexf')
+            saved_path = auto_save_graph(text_graph, auto_save_path, args.verbose)
+            if args.verbose:
+                print(f"  💾 Graph auto-saved to: {saved_path}")
+        except Exception as e:
+            if args.verbose:
+                print(f"  ⚠️ Auto-save failed: {e}")
+    
+    # Beam Search for path finding (optional)
+    if getattr(args, 'beam_search', False):
+        if args.verbose:
+            print("  🎯 Running beam search to find paths from claim to sentences...")
+        try:
+            beam_width = getattr(args, 'beam_width', 10)
+            max_depth = getattr(args, 'beam_max_depth', 6)
+            max_paths = getattr(args, 'beam_max_paths', 20)
+            export_dir = getattr(args, 'beam_export_dir', 'output')
+            
+            # Run beam search
+            paths = text_graph.beam_search_paths(
+                beam_width=beam_width,
+                max_depth=max_depth,
+                max_paths=max_paths
+            )
+            
+            if paths:
+                # Export results
+                json_file, summary_file = text_graph.export_beam_search_results(
+                    paths, 
+                    output_dir=export_dir
+                )
+                
+                # Print statistics
+                if args.verbose:
+                    stats = text_graph.analyze_paths_quality(paths)
+                    print(f"  📊 Beam search results:")
+                    print(f"    Found {stats['total_paths']} paths")
+                    print(f"    Avg score: {stats['avg_score']:.3f}")
+                    print(f"    Avg length: {stats['avg_length']:.1f} nodes")
+                    print(f"    Paths to sentences: {stats['paths_to_sentences']}")
+                    print(f"    Paths through entities: {stats['paths_through_entities']}")
+                    print(f"    Files saved: {json_file}, {summary_file}")
+            else:
+                if args.verbose:
+                    print("  ⚠️ No paths found from claim to sentences")
+                    
+        except Exception as e:
+            if args.verbose:
+                print(f"  ⚠️ Beam search failed: {e}")
     
     return text_graph
 
@@ -377,6 +455,36 @@ def print_statistics(text_graph, verbose=False):
         print(f"\n📊 Most Frequent Words:")
         for word, freq in stats['most_frequent_words']:
             print(f"  '{word}': {freq} times")
+
+def auto_save_graph(text_graph, path_pattern, verbose=False):
+    """
+    Tự động lưu graph với timestamp và tạo thư mục nếu cần
+    
+    Args:
+        text_graph: TextGraph object to save
+        path_pattern: Path pattern with {timestamp} placeholder
+        verbose: Whether to print verbose output
+        
+    Returns:
+        str: Actual saved file path
+    """
+    import datetime
+    
+    # Generate timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Replace {timestamp} in path
+    actual_path = path_pattern.replace('{timestamp}', timestamp)
+    
+    # Create directory if it doesn't exist
+    directory = os.path.dirname(actual_path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    
+    # Save the graph
+    text_graph.save_graph(actual_path)
+    
+    return actual_path
 
 def save_outputs(text_graph, args):
     """Save various output formats"""
