@@ -2,317 +2,378 @@
 # -*- coding: utf-8 -*-
 
 """
-Phân tích kết quả Beam Search và trích xuất danh sách câu được xếp hạng
-Đọc file JSON từ beam search, lấy sentences không trùng lặp, xếp theo thứ tự quan trọng
+Analyze beam search results from output directory
+Provides comprehensive statistical analysis and visualizations
 """
 
-import json
 import os
-import argparse
-from collections import defaultdict, Counter
-from datetime import datetime
-from typing import Dict, List, Tuple
+import json
+import pandas as pd
+import numpy as np
+from glob import glob
+from collections import defaultdict
+import matplotlib.pyplot as plt
+import seaborn as sns
+from typing import Dict, List, Tuple, Optional
 
-
-class BeamSearchSentenceAnalyzer:
-    """Phân tích sentences từ kết quả beam search"""
+def load_beam_search_results(output_dir: str = "output") -> List[Dict]:
+    """Load all beam search JSON files from output directory"""
+    results = []
+    pattern = os.path.join(output_dir, "beam_search_*.json")
     
-    def __init__(self):
-        self.sentences_data = {}  # sentence_id -> sentence_info
-        self.sentence_stats = defaultdict(lambda: {
-            'frequency': 0,
-            'total_score': 0.0,
-            'avg_score': 0.0,
-            'max_score': 0.0,
-            'min_score': float('inf'),
-            'paths_count': 0,
-            'sentence_text': '',
-            'sentence_id': ''
-        })
-    
-    def load_beam_results(self, json_file: str) -> Dict:
-        """Đọc file JSON kết quả beam search"""
+    for json_file in sorted(glob(pattern)):
+        # Skip summary and patterns files
+        if any(skip in json_file for skip in ["summary", "patterns", "analysis"]):
+            continue
+            
         try:
             with open(json_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            print(f"✅ Loaded beam search results from: {json_file}")
-            print(f"   Total paths: {data.get('total_paths_found', 0)}")
-            print(f"   Search config: beam_width={data.get('search_config', {}).get('beam_width', 'N/A')}")
-            return data
-        except FileNotFoundError:
-            print(f"❌ File not found: {json_file}")
-            return {}
-        except json.JSONDecodeError as e:
-            print(f"❌ JSON decode error: {e}")
-            return {}
-    
-    def analyze_sentences(self, beam_data: Dict) -> Dict[str, Dict]:
-        """Phân tích và xếp hạng sentences từ beam search paths"""
-        if not beam_data or 'paths' not in beam_data:
-            print("❌ No valid beam search data to analyze")
-            return {}
-        
-        print(f"\n🔍 Analyzing {len(beam_data['paths'])} paths...")
-        
-        # Reset data
-        self.sentence_stats.clear()
-        
-        # Process each path
-        for path_idx, path in enumerate(beam_data['paths']):
-            path_score = path.get('score', 0.0)
-            node_details = path.get('node_details', [])
-            
-            # Find sentence nodes in this path
-            sentence_nodes = [
-                node for node in node_details 
-                if node.get('type', '').lower() == 'sentence'
-            ]
-            
-            # Update stats for each sentence in this path
-            for sentence_node in sentence_nodes:
-                sentence_id = sentence_node.get('id', '')
-                sentence_text = sentence_node.get('text', '').strip()
                 
-                if sentence_id and sentence_text:
-                    stats = self.sentence_stats[sentence_id]
-                    
-                    # Update statistics
-                    stats['frequency'] += 1
-                    stats['total_score'] += path_score
-                    stats['max_score'] = max(stats['max_score'], path_score)
-                    stats['min_score'] = min(stats['min_score'], path_score)
-                    stats['paths_count'] += 1
-                    stats['sentence_text'] = sentence_text
-                    stats['sentence_id'] = sentence_id
-        
-        # Calculate average scores
-        for sentence_id, stats in self.sentence_stats.items():
-            if stats['frequency'] > 0:
-                stats['avg_score'] = stats['total_score'] / stats['frequency']
-                if stats['min_score'] == float('inf'):
-                    stats['min_score'] = 0.0
-        
-        print(f"✅ Found {len(self.sentence_stats)} unique sentences")
-        return dict(self.sentence_stats)
+                # Extract sample index from filename
+                filename = os.path.basename(json_file)
+                sample_idx = filename.replace("beam_search_", "").replace(".json", "")
+                
+                # Add metadata
+                data['filename'] = filename
+                data['sample_index'] = sample_idx
+                results.append(data)
+                
+            print(f"✅ Loaded {json_file}")
+        except Exception as e:
+            print(f"❌ Error loading {json_file}: {e}")
     
-    def rank_sentences(self, sentences_stats: Dict, ranking_method: str = 'frequency') -> List[Tuple]:
-        """Xếp hạng sentences theo các tiêu chí khác nhau"""
-        if not sentences_stats:
-            return []
+    if not results:
+        print("⚠️ No beam search results found. Make sure you have run beam search first.")
+        return []
         
-        ranking_functions = {
-            'frequency': lambda x: x[1]['frequency'],
-            'avg_score': lambda x: x[1]['avg_score'],
-            'max_score': lambda x: x[1]['max_score'],
-            'total_score': lambda x: x[1]['total_score'],
-            'combined': lambda x: x[1]['frequency'] * x[1]['avg_score']  # Frequency × Average Score
+    print(f"\n📊 Successfully loaded {len(results)} beam search samples")
+    return results
+
+def analyze_paths(beam_results: Dict) -> Dict:
+    """Analyze paths from a single beam search result"""
+    paths = beam_results.get('paths', [])
+    if not paths:
+        return {
+            'sample_index': beam_results.get('sample_index', 'unknown'),
+            'filename': beam_results.get('filename', 'unknown'),
+            'total_paths': 0,
+            'avg_score': 0.0,
+            'max_score': 0.0,
+            'min_score': 0.0,
+            'avg_length': 0.0,
+            'max_length': 0,
+            'min_length': 0,
+            'paths_to_sentences': 0,
+            'paths_through_entities': 0,
+            'sentence_reach_rate': 0.0,
+            'entity_visit_rate': 0.0,
+            'unique_sentences_reached': 0,
+            'claim_word_coverage': 0.0
         }
-        
-        if ranking_method not in ranking_functions:
-            print(f"⚠️ Unknown ranking method: {ranking_method}. Using 'frequency'")
-            ranking_method = 'frequency'
-        
-        # Sort sentences by the chosen ranking method
-        ranked_sentences = sorted(
-            sentences_stats.items(),
-            key=ranking_functions[ranking_method],
-            reverse=True
-        )
-        
-        print(f"📊 Ranked sentences by: {ranking_method}")
-        return ranked_sentences
     
-    def export_ranked_sentences(self, ranked_sentences: List[Tuple], 
-                               output_file: str = None, 
-                               ranking_method: str = 'frequency') -> str:
-        """Export danh sách sentences đã xếp hạng"""
-        if output_file is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = f"output/ranked_sentences_{ranking_method}_{timestamp}.txt"
-        
-        # Ensure output directory exists
-        os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write("📊 BEAM SEARCH - RANKED SENTENCES ANALYSIS\n")
-            f.write("="*70 + "\n\n")
-            
-            f.write(f"Ranking Method: {ranking_method.upper()}\n")
-            f.write(f"Total Unique Sentences: {len(ranked_sentences)}\n")
-            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            
-            # Summary statistics
-            if ranked_sentences:
-                frequencies = [stats['frequency'] for _, stats in ranked_sentences]
-                avg_scores = [stats['avg_score'] for _, stats in ranked_sentences]
-                
-                f.write("📈 SUMMARY STATISTICS:\n")
-                f.write("-" * 40 + "\n")
-                f.write(f"  Max frequency: {max(frequencies)}\n")
-                f.write(f"  Min frequency: {min(frequencies)}\n")
-                f.write(f"  Avg frequency: {sum(frequencies)/len(frequencies):.1f}\n")
-                f.write(f"  Max avg_score: {max(avg_scores):.3f}\n")
-                f.write(f"  Min avg_score: {min(avg_scores):.3f}\n")
-                f.write(f"  Overall avg_score: {sum(avg_scores)/len(avg_scores):.3f}\n\n")
-            
-            # Detailed ranking
-            f.write("🏆 RANKED SENTENCES:\n")
-            f.write("="*70 + "\n\n")
-            
-            for rank, (sentence_id, stats) in enumerate(ranked_sentences, 1):
-                f.write(f"RANK #{rank:2d} │ ")
-                
-                if ranking_method == 'frequency':
-                    f.write(f"Frequency: {stats['frequency']:2d}")
-                elif ranking_method == 'avg_score':
-                    f.write(f"Avg Score: {stats['avg_score']:5.3f}")
-                elif ranking_method == 'max_score':
-                    f.write(f"Max Score: {stats['max_score']:5.3f}")
-                elif ranking_method == 'total_score':
-                    f.write(f"Total Score: {stats['total_score']:6.3f}")
-                elif ranking_method == 'combined':
-                    combined_score = stats['frequency'] * stats['avg_score']
-                    f.write(f"Combined: {combined_score:6.3f}")
-                
-                f.write(f" │ Paths: {stats['paths_count']:2d}\n")
-                f.write("-" * 70 + "\n")
-                
-                # Sentence text (truncated for readability)
-                sentence_text = stats['sentence_text']
-                if len(sentence_text) > 80:
-                    sentence_text = sentence_text[:77] + "..."
-                f.write(f"Text: {sentence_text}\n")
-                
-                # Detailed stats
-                f.write(f"Stats: freq={stats['frequency']}, ")
-                f.write(f"avg_score={stats['avg_score']:.3f}, ")
-                f.write(f"score_range=({stats['min_score']:.3f}-{stats['max_score']:.3f})\n")
-                f.write(f"ID: {sentence_id}\n")
-                f.write("\n" + "="*70 + "\n\n")
-        
-        print(f"💾 Exported ranked sentences to: {output_file}")
-        return output_file
+    # Basic statistics
+    scores = [p.get('score', 0.0) for p in paths]
+    lengths = [len(p.get('nodes', [])) for p in paths]
     
-    def export_simple_list(self, ranked_sentences: List[Tuple], 
-                          output_file: str = None,
-                          ranking_method: str = 'frequency') -> str:
-        """Export danh sách sentences đơn giản (chỉ text)"""
-        if output_file is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = f"output/simple_sentences_{ranking_method}_{timestamp}.txt"
+    # Advanced analysis
+    sentences_reached = set()
+    entities_visited = set()
+    paths_with_sentences = 0
+    paths_with_entities = 0
+    total_claim_words = 0
+    total_matched_words = 0
+    
+    for path in paths:
+        nodes = path.get('nodes', [])
         
-        # Ensure output directory exists
-        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        # Check for sentences and entities in path
+        has_sentence = False
+        has_entity = False
         
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(f"# Sentences ranked by {ranking_method}\n")
-            f.write(f"# Total: {len(ranked_sentences)} unique sentences\n")
-            f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        for node in nodes:
+            if node.startswith('sentence_'):
+                sentences_reached.add(node)
+                has_sentence = True
+            elif node.startswith('entity_'):
+                entities_visited.add(node)
+                has_entity = True
+        
+        if has_sentence:
+            paths_with_sentences += 1
+        if has_entity:
+            paths_with_entities += 1
             
-            for rank, (sentence_id, stats) in enumerate(ranked_sentences, 1):
-                ranking_value = stats.get(ranking_method, stats['frequency'])
-                f.write(f"{rank:2d}. [{ranking_value:5.1f}] {stats['sentence_text']}\n")
+        # Word matching analysis
+        claim_words = path.get('total_claim_words', 0)
+        matched_words = path.get('claim_words_matched', 0)
+        total_claim_words = max(total_claim_words, claim_words)
+        total_matched_words += matched_words
+    
+    # Calculate coverage
+    avg_word_coverage = (total_matched_words / (len(paths) * max(total_claim_words, 1))) * 100
+    
+    analysis = {
+        'sample_index': beam_results.get('sample_index', 'unknown'),
+        'filename': beam_results.get('filename', 'unknown'),
+        'total_paths': len(paths),
+        'avg_score': np.mean(scores) if scores else 0.0,
+        'max_score': max(scores) if scores else 0.0,
+        'min_score': min(scores) if scores else 0.0,
+        'std_score': np.std(scores) if scores else 0.0,
+        'avg_length': np.mean(lengths) if lengths else 0.0,
+        'max_length': max(lengths) if lengths else 0,
+        'min_length': min(lengths) if lengths else 0,
+        'std_length': np.std(lengths) if lengths else 0.0,
+        'paths_to_sentences': paths_with_sentences,
+        'paths_through_entities': paths_with_entities,
+        'unique_sentences_reached': len(sentences_reached),
+        'unique_entities_visited': len(entities_visited),
+        'sentence_reach_rate': paths_with_sentences / len(paths) if paths else 0.0,
+        'entity_visit_rate': paths_with_entities / len(paths) if paths else 0.0,
+        'claim_word_coverage': avg_word_coverage,
+        'beam_width': beam_results.get('metadata', {}).get('beam_width', 10),
+        'max_depth': beam_results.get('metadata', {}).get('max_depth', 6)
+    }
+    
+    return analysis
+
+def create_summary_dataframe(all_analyses: List[Dict]) -> pd.DataFrame:
+    """Create a DataFrame from all analyses"""
+    if not all_analyses:
+        return pd.DataFrame()
+    return pd.DataFrame(all_analyses)
+
+def plot_metrics_over_time(df: pd.DataFrame, save_dir: str = "output"):
+    """Plot various metrics over time with improved visualizations"""
+    if df.empty:
+        print("⚠️ No data to plot")
+        return
         
-        print(f"📝 Exported simple sentence list to: {output_file}")
-        return output_file
-
-
-def find_latest_beam_file(output_dir: str = "output") -> str:
-    """Tìm file beam search mới nhất"""
-    try:
-        beam_files = [
-            f for f in os.listdir(output_dir) 
-            if f.startswith('beam_search_') and f.endswith('.json')
-        ]
-        if not beam_files:
-            return ""
+    # Ensure save directory exists
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Set style
+    plt.style.use('seaborn-v0_8' if 'seaborn-v0_8' in plt.style.available else 'default')
+    
+    metrics_groups = [
+        ('scores', ['avg_score', 'max_score', 'min_score'], 'Beam Search Scores'),
+        ('lengths', ['avg_length', 'max_length', 'min_length'], 'Path Lengths'),
+        ('rates', ['sentence_reach_rate', 'entity_visit_rate'], 'Success Rates'),
+        ('coverage', ['claim_word_coverage'], 'Word Coverage (%)'),
+        ('diversity', ['unique_sentences_reached', 'unique_entities_visited'], 'Unique Nodes Reached')
+    ]
+    
+    for group_name, columns, title in metrics_groups:
+        # Check if columns exist in dataframe
+        available_columns = [col for col in columns if col in df.columns]
+        if not available_columns:
+            continue
+            
+        plt.figure(figsize=(14, 8))
         
-        # Sort by timestamp in filename
-        beam_files.sort(reverse=True)
-        latest_file = os.path.join(output_dir, beam_files[0])
-        print(f"🔍 Found latest beam search file: {latest_file}")
-        return latest_file
-    except FileNotFoundError:
-        return ""
+        for col in available_columns:
+            plt.plot(df.index, df[col], marker='o', label=col.replace('_', ' ').title(), linewidth=2, markersize=4)
+        
+        plt.title(f'{title} Over Sample Index', fontsize=16, fontweight='bold')
+        plt.xlabel('Sample Index', fontsize=12)
+        plt.ylabel(title.split()[0], fontsize=12)
+        plt.legend(fontsize=10)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        # Save plot
+        filename = os.path.join(save_dir, f'beam_search_{group_name}_analysis.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"📊 Saved {filename}")
 
+def analyze_path_patterns(beam_results: List[Dict]) -> Dict[str, Dict]:
+    """Analyze common patterns in paths with enhanced pattern recognition"""
+    patterns = defaultdict(int)
+    detailed_patterns = defaultdict(int)
+    
+    for result in beam_results:
+        for path in result.get('paths', []):
+            nodes = path.get('nodes', [])
+            
+            # Basic node type sequence
+            node_types = []
+            for node in nodes:
+                if node.startswith('claim'):
+                    node_types.append('C')
+                elif node.startswith('word_'):
+                    node_types.append('W')
+                elif node.startswith('sentence_'):
+                    node_types.append('S')
+                elif node.startswith('entity_'):
+                    node_types.append('E')
+                else:
+                    node_types.append('?')
+            
+            # Create pattern string
+            pattern = '->'.join(node_types)
+            patterns[pattern] += 1
+            
+            # Detailed pattern with path success
+            reaches_sentence = any(n.startswith('S') for n in node_types)
+            has_entity = any(n.startswith('E') for n in node_types)
+            
+            pattern_key = f"{pattern} ({'SUCCESS' if reaches_sentence else 'PARTIAL'})"
+            if has_entity:
+                pattern_key += " +ENTITY"
+            detailed_patterns[pattern_key] += 1
+    
+    return {
+        'basic_patterns': dict(sorted(patterns.items(), key=lambda x: x[1], reverse=True)),
+        'detailed_patterns': dict(sorted(detailed_patterns.items(), key=lambda x: x[1], reverse=True))
+    }
+
+def create_comprehensive_report(df: pd.DataFrame, patterns: Dict, save_dir: str = "output") -> str:
+    """Create a comprehensive analysis report"""
+    if df.empty:
+        return "No data available for report generation."
+    
+    report_lines = [
+        "📊 COMPREHENSIVE BEAM SEARCH ANALYSIS REPORT",
+        "=" * 60,
+        f"Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Total Samples Analyzed: {len(df)}",
+        "",
+        "🎯 SUMMARY STATISTICS",
+        "-" * 30
+    ]
+    
+    # Overall statistics
+    if not df.empty:
+        report_lines.extend([
+            f"Average Score: {df['avg_score'].mean():.3f} ± {df['avg_score'].std():.3f}",
+            f"Average Path Length: {df['avg_length'].mean():.2f} ± {df['avg_length'].std():.2f}",
+            f"Sentence Reach Rate: {df['sentence_reach_rate'].mean():.2%} ± {df['sentence_reach_rate'].std():.2%}",
+            f"Entity Visit Rate: {df['entity_visit_rate'].mean():.2%} ± {df['entity_visit_rate'].std():.2%}",
+            f"Word Coverage: {df['claim_word_coverage'].mean():.2f}% ± {df['claim_word_coverage'].std():.2f}%",
+            ""
+        ])
+    
+    # Top performing samples
+    if 'avg_score' in df.columns:
+        top_samples = df.nlargest(5, 'avg_score')[['sample_index', 'avg_score', 'sentence_reach_rate']]
+        report_lines.extend([
+            "🏆 TOP 5 PERFORMING SAMPLES",
+            "-" * 30
+        ])
+        for _, row in top_samples.iterrows():
+            report_lines.append(f"Sample {row['sample_index']}: Score {row['avg_score']:.3f}, Success Rate {row['sentence_reach_rate']:.1%}")
+        report_lines.append("")
+    
+    # Pattern analysis
+    basic_patterns = patterns.get('basic_patterns', {})
+    if basic_patterns:
+        report_lines.extend([
+            "🔍 MOST COMMON PATH PATTERNS",
+            "-" * 30
+        ])
+        for pattern, count in list(basic_patterns.items())[:10]:
+            percentage = count / sum(basic_patterns.values()) * 100
+            report_lines.append(f"{pattern}: {count} occurrences ({percentage:.1f}%)")
+        report_lines.append("")
+    
+    # Performance insights
+    if not df.empty:
+        report_lines.extend([
+            "💡 PERFORMANCE INSIGHTS",
+            "-" * 30
+        ])
+        
+        high_performers = df[df['sentence_reach_rate'] > 0.8]
+        if not high_performers.empty:
+            report_lines.append(f"• {len(high_performers)} samples achieved >80% sentence reach rate")
+            report_lines.append(f"• These samples had average score: {high_performers['avg_score'].mean():.3f}")
+        
+        entity_rich = df[df['entity_visit_rate'] > 0.5]
+        if not entity_rich.empty:
+            report_lines.append(f"• {len(entity_rich)} samples had >50% entity visit rate")
+            report_lines.append(f"• Entity-rich paths average score: {entity_rich['avg_score'].mean():.3f}")
+        
+        report_lines.append("")
+    
+    report_content = '\n'.join(report_lines)
+    
+    # Save report
+    report_file = os.path.join(save_dir, "beam_search_comprehensive_report.txt")
+    with open(report_file, 'w', encoding='utf-8') as f:
+        f.write(report_content)
+    
+    return report_file
 
 def main():
-    """Main function"""
-    parser = argparse.ArgumentParser(description='Analyze beam search results and rank sentences')
-    parser.add_argument('--input', '-i', type=str, help='Input beam search JSON file')
-    parser.add_argument('--output-dir', '-o', type=str, default='output', 
-                       help='Output directory (default: output)')
-    parser.add_argument('--ranking', '-r', type=str, default='frequency',
-                       choices=['frequency', 'avg_score', 'max_score', 'total_score', 'combined'],
-                       help='Ranking method (default: frequency)')
-    parser.add_argument('--simple', '-s', action='store_true',
-                       help='Also export simple sentence list')
-    parser.add_argument('--auto', '-a', action='store_true',
-                       help='Auto-find latest beam search file')
+    """Main analysis function with enhanced error handling"""
+    print("🔍 Analyzing beam search results...")
     
-    args = parser.parse_args()
-    
-    print("📊 BEAM SEARCH SENTENCE ANALYZER")
-    print("="*50)
-    
-    # Determine input file
-    input_file = args.input
-    if args.auto or not input_file:
-        input_file = find_latest_beam_file(args.output_dir)
-        if not input_file:
-            print("❌ No beam search files found. Run beam search first!")
-            print("   Example: python3 main.py --demo --beam-search --verbose")
+    try:
+        # Load all results
+        results = load_beam_search_results()
+        if not results:
+            print("❌ No beam search results found. Please run beam search first.")
             return
-    
-    if not os.path.exists(input_file):
-        print(f"❌ Input file not found: {input_file}")
-        return
-    
-    # Analyze sentences
-    analyzer = BeamSearchSentenceAnalyzer()
-    
-    # Load and analyze
-    beam_data = analyzer.load_beam_results(input_file)
-    if not beam_data:
-        return
-    
-    sentences_stats = analyzer.analyze_sentences(beam_data)
-    if not sentences_stats:
-        return
-    
-    # Rank sentences
-    ranked_sentences = analyzer.rank_sentences(sentences_stats, args.ranking)
-    
-    # Show top 5 sentences
-    print(f"\n🏆 TOP 5 SENTENCES (by {args.ranking}):")
-    print("-" * 60)
-    for i, (sentence_id, stats) in enumerate(ranked_sentences[:5], 1):
-        ranking_value = stats.get(args.ranking, stats['frequency'])
-        sentence_preview = stats['sentence_text'][:50] + "..." if len(stats['sentence_text']) > 50 else stats['sentence_text']
-        print(f"{i}. [{ranking_value:5.1f}] {sentence_preview}")
-    
-    # Export results
-    print(f"\n💾 Exporting results...")
-    
-    # Detailed analysis
-    detailed_file = analyzer.export_ranked_sentences(
-        ranked_sentences, 
-        ranking_method=args.ranking
-    )
-    
-    # Simple list (optional)
-    if args.simple:
-        simple_file = analyzer.export_simple_list(
-            ranked_sentences,
-            ranking_method=args.ranking
-        )
-    
-    print(f"\n✅ Analysis completed!")
-    print(f"   Input: {input_file}")
-    print(f"   Detailed output: {detailed_file}")
-    if args.simple:
-        print(f"   Simple list: {simple_file}")
-
+        
+        # Analyze each result
+        print("\n📊 Analyzing individual samples...")
+        analyses = []
+        for i, result in enumerate(results):
+            try:
+                analysis = analyze_paths(result)
+                analyses.append(analysis)
+                if (i + 1) % 10 == 0:
+                    print(f"   Processed {i + 1}/{len(results)} samples...")
+            except Exception as e:
+                print(f"⚠️ Error analyzing sample {i}: {e}")
+                continue
+        
+        if not analyses:
+            print("❌ No valid analyses could be performed")
+            return
+        
+        # Create DataFrame
+        df = create_summary_dataframe(analyses)
+        
+        # Save detailed statistics
+        stats_file = os.path.join("output", "beam_search_detailed_stats.csv")
+        df.to_csv(stats_file, index=False)
+        print(f"\n💾 Saved detailed statistics to {stats_file}")
+        
+        # Print summary
+        print("\n📈 SUMMARY STATISTICS:")
+        if not df.empty:
+            summary_stats = df[['avg_score', 'avg_length', 'sentence_reach_rate', 'entity_visit_rate']].describe()
+            print(summary_stats.round(3))
+        
+        # Create visualizations
+        print("\n📊 Creating visualizations...")
+        plot_metrics_over_time(df)
+        
+        # Analyze patterns
+        print("\n🔍 Analyzing path patterns...")
+        patterns = analyze_path_patterns(results)
+        
+        # Save patterns
+        patterns_file = os.path.join("output", "beam_search_patterns.json")
+        with open(patterns_file, 'w', encoding='utf-8') as f:
+            json.dump(patterns, f, indent=2, ensure_ascii=False)
+        print(f"💾 Saved path patterns to {patterns_file}")
+        
+        # Create comprehensive report
+        report_file = create_comprehensive_report(df, patterns)
+        print(f"📄 Saved comprehensive report to {report_file}")
+        
+        print("\n✅ Analysis completed successfully!")
+        print(f"📁 All outputs saved to 'output/' directory")
+        
+    except Exception as e:
+        print(f"❌ Fatal error during analysis: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main() 
